@@ -14,3 +14,16 @@
 .checkin-panel .button{flex:none}
 .panel input[type="checkbox"]{accent-color:#baf16e}
 @media(max-width:380px){.checkin-panel{padding:12px}.checkin-panel strong{font-size:13px}}
+
+/* PeakPlan v4: periodisierte Coach-Karten */
+.coach-panel{background:linear-gradient(140deg,#1c2d37,#172534 65%,#22332f);border-color:#425d5d;margin:12px 0}
+.coach-panel h2{font-size:21px;letter-spacing:-.5px}
+.phase-bar{height:8px;overflow:hidden;border-radius:30px;background:#2c3a49;margin-top:11px}
+.phase-bar>div{height:100%;background:linear-gradient(90deg,#a5dd69,#daf5a2);border-radius:30px;transition:width .3s}
+.coach-mini{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:#adc6c7;font-size:11px;margin:12px 0}
+.coach-mini strong{color:#e8fbeb}
+.source-entry{border-bottom:1px solid #304053;padding:11px 0}
+.source-entry:last-child{border:0}
+.source-entry a{display:inline-block;font-size:13px;font-weight:750;margin-bottom:5px;text-decoration:none}
+.source-entry .hint{line-height:1.5}
+@media(max-width:390px){.coach-panel{padding:12px}.coach-panel h2{font-size:19px}}

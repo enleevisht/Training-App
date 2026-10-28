@@ -1,6 +1,6 @@
-/* PeakPlan v3: Neue Dateien sofort laden, bei Offline-Verbindung aus Cache bedienen. */
-const VERSION = 'peakplan-v3.0.0';
-const ASSETS = ['./', './index.html', './style.css?v=3', './app.js?v=3', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+/* PeakPlan v4: Neue Dateien sofort laden, bei Offline-Verbindung aus Cache bedienen. */
+const VERSION = 'peakplan-v4.0.0';
+const ASSETS = ['./', './index.html', './style.css?v=4', './app.js?v=4', './coach-engine.js?v=4', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(VERSION).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
