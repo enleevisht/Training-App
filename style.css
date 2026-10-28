@@ -27,3 +27,7 @@
 .source-entry a{display:inline-block;font-size:13px;font-weight:750;margin-bottom:5px;text-decoration:none}
 .source-entry .hint{line-height:1.5}
 @media(max-width:390px){.coach-panel{padding:12px}.coach-panel h2{font-size:19px}}
+
+/* v5 · bewusst begründete Coach-Entscheidung */
+.coach-insight{margin:12px 0;background:linear-gradient(145deg,#172b29,#1b2838);border-color:#486a5c}
+.coach-insight h2{letter-spacing:-.3px}.coach-insight .hint{line-height:1.6}

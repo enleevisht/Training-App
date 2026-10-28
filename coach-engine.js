@@ -1,4 +1,4 @@
-/* PeakPlan Coach 4.0 — lokale, transparente Entscheidungsregeln.
+/* PeakPlan Coach 5.0 — lokale, transparente Entscheidungsregeln.
  * Keine behauptete KI-Prognose. Keine medizinische Diagnostik.
  * Evidenz und Gültigkeitsgrenzen in README und UI offengelegt.
  */
@@ -71,6 +71,70 @@ function boardTrend(state,date){
    'Konstante Projektarbeit: zunächst Versuchszahl und Qualität nachvollziehbar dokumentieren.';
  return {count:recent.length,sends,hardFailed,message};
 }
+const LIMITERS={finger:'Kleine Griffe / Fingerbelastung',pull:'Zugkraft',tension:'Körperspannung / Fußdruck',feet:'Trittpräzision',power:'Explosivität',coordination:'Koordination',tactics:'Taktik / Pausengestaltung'};
+function diagnosis(state,date){
+ const all=history(state,date,84).filter(x=>x.log.limiter && LIMITERS[x.log.limiter] && ['boulder','kraft'].includes(x.type));
+ // A single session is not a diagnosis; look for reports on separate days.
+ const unique=all.filter((x,i)=>all.findIndex(y=>y.date===x.date&&y.log.limiter===x.log.limiter)===i);
+ const count={};for(const x of unique)count[x.log.limiter]=(count[x.log.limiter]||0)+1;
+ const ranked=Object.entries(count).sort((a,b)=>b[1]-a[1]);const [key,nCount]=ranked[0]||[];
+ const share=nCount/Math.max(1,unique.length);
+ if(!key || unique.length<5||nCount<3||share<0.6) return {key:null,confidence:'unzureichend',observations:unique.length,signal:null,reason:unique.length<5?`Erst ${unique.length} von mindestens fünf unabhängigen Protokollen mit limiterendem Faktor vorhanden.`:'Die beobachteten Limitierungen sind uneinheitlich. Kein Schwerpunktwechsel begründbar.'};
+ return {key,confidence:unique.length>=8&&nCount>=5?'mittel':'niedrig',observations:unique.length,signal:`${nCount} von ${unique.length} Meldungen: ${LIMITERS[key]}`,reason:'Wiederholt selbst berichteter limitierender Faktor; Hinweis, keine objektive Diagnose.'};
+}
+function decision(state,date,type){
+ const r=readiness(state,date,type),d=diagnosis(state,date),c=check(state,date),mode=state.settings?.coachMode==='manual'?'manual':'auto';
+ const validManual=['finger','pull','tension','feet','power','coordination','tactics'];
+ const legacy={footwork:'feet'};const manualKey=legacy[state.settings?.weakness]||state.settings?.weakness;
+ const focus=mode==='manual'&&validManual.includes(manualKey)?manualKey:mode==='auto'?d.key:null;
+ const why=[];const h=history(state,date,120),recent=h.filter(x=>span(date,x.date)<=10),prior=h.filter(x=>span(date,x.date)>10);
+ const skipped=Object.entries(state.logs||{}).filter(([day])=>day<date&&span(date,day)<=10).flatMap(([,byId])=>Object.values(byId||{})).filter(x=>x?.status==='skipped').length;
+ let strategy='beibehalten';
+ if(r.level==='protect'||r.level==='recovery') {strategy='schutz';why.push('Schmerz und akute Erholung haben Vorrang.');}
+ else if(c.sessionWish==='off'){strategy='pause';why.push('Heute ausdrücklich kein Training gewünscht.');}
+ else if(c.sessionWish==='light'||r.level==='reduced'){strategy='reduzieren';why.push('Belastung an Tagesform oder deinen Wunsch anpassen.');}
+ else if(c.sessionWish==='return'||(h.length>=5&&recent.length===0&&prior.length>0&&skipped>=2)){strategy='wiedereinstieg';why.push('Wiedereinstieg nach gemeldeter Pause oder mehrfach abgesagten Einheiten: Einstiegsbelastung senken.');}
+ else why.push('Kein hinreichender Grund für eine Planänderung. Bewährte Hauptreize bleiben bestehen.');
+ if(!recent.length&&h.length>=3&&skipped<2&&c.sessionWish!=='return')why.push('Zuletzt keine absolvierten Einheiten protokolliert: fehlende Logs sind kein Beweis für eine Trainingspause.');
+ if(mode==='manual'&&focus)why.push('Technikschwerpunkt ausdrücklich manuell vorgegeben.');
+ else if(mode==='auto'&&focus)why.push(d.signal+' – ergänzende Technikarbeit, keine automatische Änderung des Kraftziels.');
+ else why.push('Kein eindeutiges Technikdefizit: kein künstlicher Schwerpunkt.');
+ const minutes=n(c.minutesAvailable);
+ if(minutes!==null&&minutes>=20&&minutes<=180)why.push(`Heute maximal ${minutes} Minuten verfügbar.`);
+ return {strategy,why,focus,mode,diagnosis:d,readiness:r,minutes:minutes>=20&&minutes<=180?minutes:null};
+}
+function fitTime(base,minutes,notes){
+ if(minutes===null||minutes>=base.duration||base.duration<=0)return base;
+ if(minutes<40&&['kraft','boulder'].includes(base.type)){
+  base.duration=minutes;
+  base.title='Kurze Technik / Erholung statt Maximalkraft';
+  base.steps=[['Bewegung vorbereiten','8–10 Minuten leichte, schmerzfreie Mobilität und allmähliches Aufwärmen.'],['Leichte Bewegungsqualität',`${Math.max(5,minutes-15)} Minuten lockere technische Züge ohne Limitbelastung; bei Beschwerden lieber pausieren.`],['Rückmeldung','Keine fehlende Maximalkrafteinheit nachholen oder zusammenpressen.']];
+  notes.push('Zeitfenster zu kurz für sichere hochintensive Einheit mit vollständigem Warm-up und Pausen.');
+  return base;
+ }
+ if(base.type==='run'){
+   base.duration=minutes;
+   if(minutes<40)base.steps=[['Einlaufen','8–10 min locker'],['Lockerer Lauf',`${Math.max(10,minutes-15)} min entspannt bei RPE 3–4, kein Intervalltraining.`],['Auslaufen','5 min locker']];
+   else if(base.title.includes('Interval'))base.steps=[['Einlaufen','12 min locker + zwei kurze Steigerungen'],['Kurze Qualitätsintervalle','2 × 5 min bei RPE 7–8; 3 min Gehpause/Trabpause; bei müden Beinen stattdessen locker laufen.'],['Auslaufen','10–15 min locker']];
+   else base.steps=[['Lockerer Dauerlauf',`${Math.max(20,minutes-5)} min Sprechtempo, RPE 3–4.`],['Gehen und Log','5 min locker auslaufen, Verlauf dokumentieren.']];
+   notes.push('Laufprogramm an verfügbares Zeitfenster angepasst, Intensität nicht kompensatorisch erhöht.');
+   return base;
+ }
+ if(base.type==='boulder'&&minutes<70){
+   base.duration=minutes;
+   base.steps=[['Aufwärmen','20–25 min schrittweise, inklusive Finger und Schulter'],['Boulder-Hauptreiz',`${Math.max(12,minutes-30)} min qualitativ gute, kontrollierte Versuche; lange Pausen, keine Zusatzübungen.`],['Log','5 min Ergebnis und limitierende Faktoren dokumentieren.']];
+   notes.push('Zusatzübungen fallen weg; Warm-up und Pausen bleiben erhalten.');
+   return base;
+ }
+ const warm=base.steps.find(s=>/Aufwärmen|Einlaufen|Beweglichkeit|Locker anlaufen/i.test(s[0]))||base.steps[0];
+ const main=base.steps.find(s=>/Finger-Maximalkraft|Fingerkraft · Aufbau|Fingerprimer|Fingerreize|Schwellenorientiert|VO₂max|Erhaltungsreiz|Geringe Belastung|Qualität statt|Moderates Volumen|Schwere Boulderqualität|Limit-Bouldern|Board-Limit|Locker|Rotatorenmanschette|Standardisiert|Boulder-Benchmark|Technik/i.test(s[0]))||base.steps[1];
+ const finish=base.steps.find(s=>/Log|Trainingstagebuch|Auslaufen|Abschluss|Stoppregel|Neubewertung/i.test(s[0]));
+ const chosen=[warm,main,finish].filter((s,i,a)=>s&&a.indexOf(s)===i);
+ base.steps=chosen;
+ base.duration=minutes;
+ notes.push('Zeitbudget: Hauptreiz und Warm-up beibehalten; optionale Zusatzübungen weglassen. Keine Pausen verkürzen, um Volumen aufzuholen.');
+ return base;
+}
 function protocol(log){return log.fingerMode&&valid(log.fingerEdge)&&valid(log.fingerHold)&&log.fingerGrip?`${log.fingerMode}/${log.fingerEdge}/${log.fingerHold}/${log.fingerGrip}`:null;}
 function progression(state,date,metric,opts={}){
  const recent=history(state,date,70).filter(x=>valid(x.log[metric]));
@@ -100,16 +164,18 @@ const stepsBySlot={
  prehab:{base:'Schulter & Antagonisten',strength:'Schulterstabilität',transfer:'Stabilität & Mobilität',test:'Aktive Regeneration'}
 };
 function workout(base,state,date){
- const b=structuredClone(base),p=phase(date,state.settings||{}),a=readiness(state,date,b.type);
+ const b=structuredClone(base),p=phase(date,state.settings||{}),plan=decision(state,date,b.type),a=plan.readiness;
  const k=b.templateId;
  if(!k||b.origin==='custom'||b.type==='rest'||!state.settings?.adaptiveEnabled)return b;
  const slot=stepsBySlot[k];if(!slot)return b;
- const info=[`Block ${p.cycle} · Woche ${p.week}/12 · ${p.name}`,p.goal];const notes=[...a.reasons];
+ const info=[`Block ${p.cycle} · Woche ${p.week}/12 · ${p.name}`,p.goal];const notes=[...a.reasons,...plan.why];
  const dayPhase=p.deload?'deload':p.key;let level=a.level;
  if(p.deload){notes.unshift('Geplante Entlastungswoche: Umfang bewusst deutlich reduziert');if(level==='normal')level='reduced';}
+ if(plan.strategy==='reduzieren'||plan.strategy==='wiedereinstieg')if(level==='normal')level='reduced';
+ if(plan.strategy==='pause'&&level!=='protect')level='recovery';
  const boardChoice=state.settings.boardChoice||'both';
- const weak=state.settings.weakness||'tension';
- const weaknessDrill={finger:'3 × 3 kontrollierte Einzelzüge an moderaten kleinen Griffen; keine Schmerzprovokation.',power:'4 × 1–2 explosive Einzelzüge an guten Griffen, lange Pausen und kein Technikverlust.',tension:'3 × 4 präzise, kontrollierte Züge an steiler Wand mit aktivem Fußdruck.',footwork:'4 × 2–3 kontrollierte Sequenzen mit bewusst gesetzten Füßen und möglichst leisen Tritten.',coordination:'3 × 3 koordinative Zugfolgen mit sicheren Griffen und hochwertiger Ausführung.'}[weak]||'3 × 4 kontrollierte technische Züge.';
+ const weak=plan.focus;
+ const weaknessDrill={finger:'3 × 3 kontrollierte Einzelzüge an moderaten kleinen Griffen; keine Schmerzprovokation.',power:'4 × 1–2 explosive Einzelzüge an guten Griffen, lange Pausen und kein Technikverlust.',tension:'3 × 4 präzise, kontrollierte Züge an steiler Wand mit aktivem Fußdruck.',feet:'4 × 2–3 kontrollierte Sequenzen mit bewusst gesetzten Füßen und möglichst leisen Tritten.',pull:'3 × 3 saubere Zugfolgen an guten Griffen, volle Erholung; keine zusätzliche Maximallast.',tactics:'3 Projektversuche mit expliziten Pausen und Beta-Notizen.',coordination:'3 × 3 koordinative Zugfolgen mit sicheren Griffen und hochwertiger Ausführung.'}[weak]||'3 × 4 technisch saubere, abwechslungsreiche Boulderzüge; keinen Defizit-Schwerpunkt erzwingen.';
  const board=boardChoice==='moon'?'Moonboard':boardChoice==='kilter'?'Kilterboard':boardChoice==='none'?'Wand':'Moonboard oder Kilterboard';
  const edge=Number(state.settings.edgeDepth)||15;
  const method=state.settings.fingerMethod==='hang'?'Hangboard-Hangs':'No-Hang-Pickups';
@@ -192,10 +258,11 @@ function workout(base,state,date){
  // Periodization meta info remains available in calendar, detail, and export.
  const reduction=level==='reduced'||p.deload;
  b.title=title;b.duration=duration;b.steps=steps;
+ fitTime(b,plan.minutes,notes);
  b.description=`${p.short} · Woche ${p.week}/12${p.deload?' · Entlastung':''}. ${p.goal}.`;
- b.adaptive={level,reasons:notes,progression:finger.change>0||pull.change>0,confidence:a.confidence,phase:p,hasCheckin:a.hasCheckin,info,stimulus:dayPhase,sourceIds:['climb_review','autoreg','load','dynamic_rct']};
+ b.adaptive={level,coachStrategy:plan.strategy,diagnosis:plan.diagnosis,coachMode:plan.mode,coachFocus:plan.focus,reasons:notes,progression:finger.change>0||pull.change>0,confidence:a.confidence,phase:p,hasCheckin:a.hasCheckin,info,stimulus:dayPhase,sourceIds:['climb_review','autoreg','load','dynamic_rct']};
  return b;
 }
-root.PeakCoach={VERSION:'4.0',phase,readiness,history,progression,boardTrend,workout,SOURCES};
+root.PeakCoach={VERSION:'5.0',phase,readiness,history,progression,boardTrend,diagnosis,decision,workout,SOURCES};
 if(typeof module!=='undefined'&&module.exports)module.exports=root.PeakCoach;
 })(typeof window!=='undefined'?window:globalThis);
