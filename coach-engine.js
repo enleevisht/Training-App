@@ -1,4 +1,4 @@
-/* PeakPlan Coach 5.0 — lokale, transparente Entscheidungsregeln.
+/* PeakPlan Coach 6.0 — lokale, transparente Entscheidungsregeln.
  * Keine behauptete KI-Prognose. Keine medizinische Diagnostik.
  * Evidenz und Gültigkeitsgrenzen in README und UI offengelegt.
  */
@@ -36,7 +36,15 @@ function phase(date,settings={}){
 }
 function history(state,date,days=42){const result=[];const logs=state.logs||{};
  for(const [day,map] of Object.entries(logs))if(day<date && span(date,day)<=days && span(date,day)>0){
-  for(const [id,log] of Object.entries(map||{}))if(log&&log.status==='done')result.push({date:day,id,log,type:log.snapshot?.type||'other',template:log.snapshot?.templateId||''});
+  for(const [id,log] of Object.entries(map||{}))if(log&&log.status==='done'){
+   const exercises=Array.isArray(log.exerciseEntries)?log.exerciseEntries:[];
+   const gripRows=exercises.filter(x=>['finger','pull','boulder','power'].includes(x.category)&&x.stress!=='low');
+   const gripExercise=gripRows.length>0;
+   const hardRpe=Math.max(n(log.rpe,0),...exercises.map(x=>n(x.rpe,0)));
+   const hasGrip=exercises.length?gripExercise:['kraft','boulder'].includes(log.snapshot?.type);
+   const gripRpe=gripRows.length?Math.max(...gripRows.map(x=>n(x.rpe,n(log.rpe,0)))):(exercises.length?0:n(log.rpe,0));
+   result.push({date:day,id,log,type:log.snapshot?.type||'other',template:log.snapshot?.templateId||'',gripExercise,hasGrip,gripRpe,hardRpe,exercises});
+  }
  }
  return result.sort((a,b)=>b.date.localeCompare(a.date));}
 function check(state,date){return state.checkins?.[date]||{};}
@@ -46,10 +54,10 @@ function readiness(state,date,type){
  if(n(c.energy)!==null){if(n(c.energy)<=3){score+=3;reasons.push('Deutlich reduzierte Energie');}else if(n(c.energy)<=5){score++;reasons.push('Energie unter gewohntem Niveau');}}
  if(n(c.sleep)!==null){if(n(c.sleep)<=3){score+=2;reasons.push('Schlechter Schlaf');}else if(n(c.sleep)<=5){score++;reasons.push('Schlaf eingeschränkt');}}
  if(n(c.soreness)!==null){if(n(c.soreness)>=8){score+=2;reasons.push('Sehr starker Muskelkater');}else if(n(c.soreness)>=6){score++;reasons.push('Muskelkater vorhanden');}}
- const heavyGrip=h2.filter(x=>['kraft','boulder'].includes(x.type)&&n(x.log.rpe,0)>=8);
+ const heavyGrip=h2.filter(x=>x.hasGrip&&x.gripRpe>=8);
  if(isGrip&&heavyGrip.length){score+=2;reasons.push('Schwere Finger-/Zugbelastung innerhalb der letzten 48 Stunden');}
- const hard=h3.filter(x=>n(x.log.rpe,0)>=8);if(hard.length>=2){score++;reasons.push('Mehrere harte Belastungen in 72 Stunden');}
- const grip7=h7.filter(x=>['kraft','boulder'].includes(x.type)&&n(x.log.rpe,0)>=7);
+ const hard=h3.filter(x=>x.hardRpe>=8);if(hard.length>=2){score++;reasons.push('Mehrere harte Belastungen in 72 Stunden');}
+ const grip7=h7.filter(x=>x.hasGrip&&x.gripRpe>=7);
  if(isGrip&&grip7.length>=3){score++;reasons.push('Bereits mindestens drei fordernde Kletter-/Krafteinheiten in sieben Tagen');}
  const shoulder=n(c.shoulder),finger=n(c.fingerPain);
  if(score>=4)level='recovery';else if(score>=2)level='reduced';
@@ -59,7 +67,7 @@ function readiness(state,date,type){
  if(isGrip&&(shoulder===null||finger===null))reasons.push('Finger- oder Schulterstatus fehlt: Belastung im Aufwärmen sorgfältig prüfen');
  if(!Object.keys(c).length)reasons.push('Kein Tagescheck – Einstufung allein aus dem Trainingstagebuch');
  const confidence=h.length>=10&&Object.keys(c).length>=4?'mittel':h.length>=4&&Object.keys(c).length>=2?'eingeschränkt':'gering';
- return {level,score,reasons,confidence,h,hasCheckin:Object.keys(c).length>0,shoulder,finger,heavyGrip:heavyGrip.length,hard7:h7.filter(x=>n(x.log.rpe,0)>=8).length,completed7:h7.length};
+ return {level,score,reasons,confidence,h,hasCheckin:Object.keys(c).length>0,shoulder,finger,heavyGrip:heavyGrip.length,hard7:h7.filter(x=>x.hardRpe>=8).length,completed7:h7.length};
 }
 function boardTrend(state,date){
  const entries=history(state,date,42).filter(x=>(x.type==='boulder'||x.log.board)&&['yes','no'].includes(x.log.send));
@@ -263,6 +271,6 @@ function workout(base,state,date){
  b.adaptive={level,coachStrategy:plan.strategy,diagnosis:plan.diagnosis,coachMode:plan.mode,coachFocus:plan.focus,reasons:notes,progression:finger.change>0||pull.change>0,confidence:a.confidence,phase:p,hasCheckin:a.hasCheckin,info,stimulus:dayPhase,sourceIds:['climb_review','autoreg','load','dynamic_rct']};
  return b;
 }
-root.PeakCoach={VERSION:'5.0',phase,readiness,history,progression,boardTrend,diagnosis,decision,workout,SOURCES};
+root.PeakCoach={VERSION:'6.0',phase,readiness,history,progression,boardTrend,diagnosis,decision,workout,SOURCES};
 if(typeof module!=='undefined'&&module.exports)module.exports=root.PeakCoach;
 })(typeof window!=='undefined'?window:globalThis);

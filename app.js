@@ -1,4 +1,4 @@
-/* PeakPlan v5 — evidenzinformierter periodisierter Coach, Offline-PWA. */
+/* PeakPlan v6 — Kuratierte Übungsbibliothek, frei protokollierte Übungen, Offline-PWA. */
 'use strict';
 
 const WEEKDAYS = ['Mo','Di','Mi','Do','Fr','Sa','So'];
@@ -80,7 +80,7 @@ const DEFAULT_WEEK = [
   {template:'easy_run',time:'10:00'}
 ];
 
-function initialState(){return {version:1,week:structuredClone(DEFAULT_WEEK),exceptions:{},logs:{},settings:{alertMinutes:60,exportDays:90,reminderRelease:2,adaptiveEnabled:true,blockStart:dateKey(new Date()),boardChoice:'both',weakness:'tension',coachMode:'auto',fingerMethod:'nohang',edgeDepth:15,lastIcsSignature:"",lastIcsAt:"",lastIcsCount:0},checkins:{},createdAt:new Date().toISOString()};}
+function initialState(){return {version:1,week:structuredClone(DEFAULT_WEEK),exceptions:{},logs:{},settings:{alertMinutes:60,exportDays:90,reminderRelease:2,adaptiveEnabled:true,blockStart:dateKey(new Date()),boardChoice:'both',weakness:'tension',coachMode:'auto',fingerMethod:'nohang',edgeDepth:15,lastIcsSignature:"",lastIcsAt:"",lastIcsCount:0},checkins:{},customExercises:[],createdAt:new Date().toISOString()};}
 /* v3: Lokaler, transparenter Adaptionsalgorithmus. Keine Cloud, keine Black-Box-Prognose. */
 const ADAPTIVE_VERSION = 5;
 function historyBefore(date,days=28){
@@ -182,6 +182,7 @@ let calendarMode = 'month';
 let selectedDate = dateKey(new Date());
 let calendarAnchor = selectedDate;
 let modal = '';
+let pendingQuickSessionId = null;
 let noticeTimer;
 
 function pad(n){return String(n).padStart(2,'0');}
@@ -230,7 +231,7 @@ async function writeState(){
 }
 function safeState(data){
   if(!data||typeof data!=='object'||data.version!==1||!Array.isArray(data.week)||data.week.length!==7)throw new Error('Ungültige oder inkompatible Sicherungsdatei.');
-  return {version:1,week:data.week.map((w,i)=>({template:TEMPLATES[w?.template]?w.template:DEFAULT_WEEK[i].template,time:/^\d\d:\d\d$/.test(w?.time)?w.time:DEFAULT_WEEK[i].time})),exceptions:data.exceptions&&typeof data.exceptions==='object'?data.exceptions:{},logs:data.logs&&typeof data.logs==='object'?data.logs:{},settings:{blockStart:/^\d{4}-\d\d-\d\d$/.test(data.settings?.blockStart||'')?data.settings.blockStart:dateKey(new Date()),boardChoice:['both','moon','kilter','none'].includes(data.settings?.boardChoice)?data.settings.boardChoice:'both',weakness:['finger','pull','power','tension','footwork','feet','coordination','tactics'].includes(data.settings?.weakness)?data.settings.weakness:'tension',coachMode:data.settings?.coachMode==='manual'?'manual':'auto',fingerMethod:['nohang','hang'].includes(data.settings?.fingerMethod)?data.settings.fingerMethod:'nohang',edgeDepth:[15,20].includes(Number(data.settings?.edgeDepth))?Number(data.settings.edgeDepth):15,alertMinutes:data.settings?.reminderRelease===2&&[0,15,30,60,120].includes(Number(data.settings?.alertMinutes))?Number(data.settings?.alertMinutes):60,exportDays:[30,90,180].includes(Number(data.settings?.exportDays))?Number(data.settings?.exportDays):90,reminderRelease:2,adaptiveEnabled:data.settings?.adaptiveEnabled!==false,lastIcsSignature:String(data.settings?.lastIcsSignature||""),lastIcsAt:String(data.settings?.lastIcsAt||""),lastIcsCount:Number(data.settings?.lastIcsCount||0)},checkins:data.checkins&&typeof data.checkins==='object'&&!Array.isArray(data.checkins)?data.checkins:{},createdAt:data.createdAt||new Date().toISOString()};
+  return {version:1,week:data.week.map((w,i)=>({template:TEMPLATES[w?.template]?w.template:DEFAULT_WEEK[i].template,time:/^\d\d:\d\d$/.test(w?.time)?w.time:DEFAULT_WEEK[i].time})),exceptions:data.exceptions&&typeof data.exceptions==='object'?data.exceptions:{},logs:data.logs&&typeof data.logs==='object'?data.logs:{},settings:{blockStart:/^\d{4}-\d\d-\d\d$/.test(data.settings?.blockStart||'')?data.settings.blockStart:dateKey(new Date()),boardChoice:['both','moon','kilter','none'].includes(data.settings?.boardChoice)?data.settings.boardChoice:'both',weakness:['finger','pull','power','tension','footwork','feet','coordination','tactics'].includes(data.settings?.weakness)?data.settings.weakness:'tension',coachMode:data.settings?.coachMode==='manual'?'manual':'auto',fingerMethod:['nohang','hang'].includes(data.settings?.fingerMethod)?data.settings.fingerMethod:'nohang',edgeDepth:[15,20].includes(Number(data.settings?.edgeDepth))?Number(data.settings.edgeDepth):15,alertMinutes:data.settings?.reminderRelease===2&&[0,15,30,60,120].includes(Number(data.settings?.alertMinutes))?Number(data.settings?.alertMinutes):60,exportDays:[30,90,180].includes(Number(data.settings?.exportDays))?Number(data.settings?.exportDays):90,reminderRelease:2,adaptiveEnabled:data.settings?.adaptiveEnabled!==false,lastIcsSignature:String(data.settings?.lastIcsSignature||""),lastIcsAt:String(data.settings?.lastIcsAt||""),lastIcsCount:Number(data.settings?.lastIcsCount||0)},checkins:data.checkins&&typeof data.checkins==='object'&&!Array.isArray(data.checkins)?data.checkins:{},customExercises:Array.isArray(data.customExercises)?data.customExercises.filter(x=>x&&typeof x.id==='string'&&typeof x.name==='string'&&x.id.startsWith('own-')).slice(0,250):[],createdAt:data.createdAt||new Date().toISOString()};
 }
 function sessionStart(date,s){
   const start=parseDate(date);
@@ -271,9 +272,9 @@ function toast(message){const old=document.querySelector('.toast');if(old)old.re
 
 function render(){
   const root=document.getElementById('app');
-  root.innerHTML=`<div class="app-shell"><header class="topbar"><div class="logo-wrap"><div class="brand-mark">P.</div><div><div class="brand-name">PeakPlan</div><div class="eyebrow">BOULDER · STRENGTH · RUN</div></div></div><div class="top-date">${esc(niceDate(dateKey(new Date()),true))}<br/><span>Dein Trainingscockpit · v5</span></div></header>
-  ${view==='today'?renderToday():view==='calendar'?renderCalendar():view==='progress'?renderProgress():renderSettings()}
-  </div><nav class="nav"><div class="nav-inner">${navButton('today','⌂','Heute')}${navButton('calendar','▦','Kalender')}${navButton('progress','↗','Fortschritt')}${navButton('settings','⚙','Plan & Backup')}</div></nav>
+  root.innerHTML=`<div class="app-shell"><header class="topbar"><div class="logo-wrap"><div class="brand-mark">P.</div><div><div class="brand-name">PeakPlan</div><div class="eyebrow">BOULDER · STRENGTH · RUN</div></div></div><div class="top-date">${esc(niceDate(dateKey(new Date()),true))}<br/><span>Dein Trainingscockpit · v6</span></div></header>
+  ${view==='today'?renderToday():view==='calendar'?renderCalendar():view==='library'?renderLibrary():view==='progress'?renderProgress():renderSettings()}
+  </div><nav class="nav"><div class="nav-inner">${navButton('today','⌂','Heute')}${navButton('calendar','▦','Kalender')}${navButton('library','▤','Übungen')}${navButton('progress','↗','Fortschritt')}${navButton('settings','⚙','Plan & Backup')}</div></nav>
   ${modal?`<div class="modal-backdrop" data-action="close-modal"><section class="modal" role="dialog" aria-modal="true" aria-label="Trainingsdetails">${modal}</section></div>`:''}`;
 }
 function navButton(k,icon,label){return `<button class="nav-button ${view===k?'active':''}" data-action="nav" data-view="${k}"><span class="nav-icon">${icon}</span>${label}</button>`;}
@@ -328,10 +329,11 @@ function renderCalendar(){
 function renderProgress(){
   const entries=allLogs();
   const series=[['Fingerboard · 15 mm','finger','kg'],['Weighted Pull-ups · Zusatzgewicht','pullup','kg'],['Laufen · Distanz','distance','km']];
-  return `<div class="eyebrow">DEINE TRAININGSHISTORIE</div><h1 style="font-size:29px;margin:7px 0 0">Fortschritt</h1><p class="hint" style="margin:7px 0 20px">Die Diagramme entstehen ausschließlich aus deinen tatsächlich protokollierten Trainingseinheiten. Es werden keine Werte erfunden.</p>
+  return `<div class="eyebrow">DEINE TRAININGSHISTORIE</div><h1 style="font-size:29px;margin:7px 0 0">Fortschritt</h1><p class="hint" style="margin:7px 0 20px">Die Diagramme entstehen ausschließlich aus deinen tatsächlich protokollierten Trainingseinheiten. Die neue Übungsstatistik berücksichtigt auch abweichende Trainings. Es werden keine Werte erfunden.</p>
   <div class="cards"><div class="stat-card"><div class="stat-label">Einheiten gesamt</div><div class="stat-val">${entries.length}</div></div><div class="stat-card"><div class="stat-label">Letzte 7 Tage</div><div class="stat-val">${countDone(7)}</div></div></div>
   ${series.map(([title,key,unit])=>{const points=entries.filter(e=>Number.isFinite(Number(e.log[key]))&&String(e.log[key]??'')!=='').map(e=>({date:e.date,value:Number(e.log[key])})).reverse();return `<div class="section-head"><h2>${esc(title)}</h2><span class="mini">${points.length} Messwerte</span></div><div class="panel">${points.length?svgChart(points,unit):`<div class="empty">Noch keine ${esc(unit)}-Messwerte. Beim Abschließen einer Einheit kannst du die Daten eintragen.</div>`}</div>`;}).join('')}
   <div class="section-head"><h2>Board-Transfer</h2></div><div class="panel"><strong>${esc(PeakCoach.boardTrend(state,dateKey(new Date())).message)}</strong><p class="hint" style="margin:8px 0 0">Bewertung nur aus protokollierten Durchstiegen und Versuchen, keine automatische Umrechnung von Schwierigkeitssystemen.</p></div>
+  <div class="section-head"><h2>Dokumentierte Übungen</h2></div><div class="panel">${exerciseSummary(entries)}</div>
   <div class="section-head"><h2>Trainingstagebuch</h2></div><div class="panel">${entries.length?entries.slice(0,30).map(e=>`<div class="log-card"><div class="between"><strong>${esc(e.log.title||'Training')}</strong><span class="mini">${esc(niceDate(e.date,true))}</span></div><div class="hint">RPE ${esc(e.log.rpe||'–')} ${e.log.finger?'· Finger '+esc(e.log.finger)+' kg':''}${e.log.pullup?' · Pull-up +'+esc(e.log.pullup)+' kg':''}${e.log.distance?' · '+esc(e.log.distance)+' km':''}</div>${e.log.notes?`<div class="hint" style="margin-top:4px">${esc(e.log.notes)}</div>`:''}</div>`).join(''):'<div class="empty">Dein Log ist noch leer. Starte mit deiner nächsten Einheit.</div>'}</div>`;
 }
 function svgChart(points,unit){
@@ -341,9 +343,93 @@ function svgChart(points,unit){
   const dots=pts.map(p=>`<circle cx="${p[0]}" cy="${p[1]}" r="3.5" fill="#c2f66c"/>`).join('');
   return `<svg class="progress-chart" viewBox="0 0 340 170" role="img" aria-label="Messreihe von ${min} bis ${max} ${unit}"><line x1="18" x2="322" y1="139" y2="139" stroke="#304357"/><line x1="18" x2="322" y1="34" y2="34" stroke="#304357" stroke-dasharray="3 4"/><text x="18" y="20" fill="#9aafc0" font-size="12">${esc(max)} ${esc(unit)}</text><text x="18" y="160" fill="#9aafc0" font-size="11">${esc(points[0].date.slice(5))}</text><text x="322" y="160" text-anchor="end" fill="#9aafc0" font-size="11">${esc(points[points.length-1].date.slice(5))}</text><polyline points="${line}" fill="none" stroke="#c2f66c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>${dots}</svg>`;
 }
+
+function exercises(){return PeakExercises.all(state.customExercises||[]);}
+function exerciseCard(ex){
+ const t={high:'hoch',medium:'mittel',low:'niedrig'}[ex.stress]||'individuell';
+ return `<article class="ex-card" data-ex-name="${attr(ex.name.toLowerCase())}" data-ex-cat="${attr(ex.category)}"><div class="between"><span class="pill ${ex.stress==='high'?'orange':''}">${esc(PeakExercises.CATEGORIES[ex.category]||'Eigene Übung')}</span><span class="mini">Last: ${esc(t)}</span></div><h3>${esc(ex.name)}</h3><div class="hint">${esc(ex.focus||'Individuell')} · ${esc(ex.equipment||'nach Verfügbarkeit')}</div><p>${esc(ex.description||'Eigene Übung ohne vorgegebenes Protokoll.')}</p><div class="button-group"><button class="button small" data-action="exercise-info" data-id="${attr(ex.id)}">Details</button><button class="button small primary" data-action="exercise-quicklog" data-id="${attr(ex.id)}">+ Protokollieren</button></div></article>`;
+}
+function renderLibrary(){
+ const all=exercises();const categories=PeakExercises.CATEGORIES;
+ return `<div class="eyebrow">TRAININGSWISSEN · OFFLINE</div><h1 style="font-size:29px;margin:7px 0 0">Übungsbibliothek</h1>
+ <p class="hint" style="margin:7px 0 18px">${PeakExercises.COUNT} kuratierte Übungen plus ${state.customExercises.length} eigene Übungen. Durchsuchbar und auch ohne Internet abrufbar. Keine automatische Behauptung, jede Übung sei für dich geeignet.</p>
+ <div class="panel ex-controls"><div class="field"><label for="ex-search">Übung suchen</label><input id="ex-search" type="search" placeholder="z. B. No-Hang, Campusboard, Tritttechnik …" autocomplete="off" /></div>
+ <div class="field"><label for="ex-filter">Bereich</label><select id="ex-filter"><option value="">Alle Bereiche</option>${Object.entries(categories).map(([k,v])=>`<option value="${attr(k)}">${esc(v)}</option>`).join('')}<option value="custom">Eigene Übungen</option></select></div>
+ <div class="between"><span class="hint" id="ex-count">${all.length} Übungen</span><button class="button small primary" data-action="create-exercise">+ Eigene Übung</button></div></div>
+ <div id="ex-results" class="ex-list">${all.map(exerciseCard).join('')}</div>
+ <div class="panel"><strong>Warum diese Bibliothek?</strong><p class="hint">Du kannst im Trainingstagebuch unabhängig vom ursprünglichen Plan Übungen, Sätze, Wiederholungen, Haltezeit, Zusatzlast, Griff und RPE erfassen. Die App speichert die tatsächliche Belastung, nicht nur den Trainingsvorschlag. Große Lasten, Campusboard und Fingerbelastung nur mit angemessener Vorbereitung und ohne Schmerz.</p><p class="hint">Evidenzgrundlage für Trainingsprinzipien: <a href="https://pubmed.ncbi.nlm.nih.gov/36820707/" target="_blank" rel="noopener noreferrer">Langer et al. · Review 2023</a> · <a href="https://pubmed.ncbi.nlm.nih.gov/39560837/" target="_blank" rel="noopener noreferrer">Fingerbelastungsstudie 2024</a>. Nicht jede einzelne gelistete Übung ist durch eine eigene kontrollierte Studie abgesichert.</p></div>`;
+}
+function filterExercisePicker(){
+ const select=document.getElementById('exercise-log-select'),query=(document.getElementById('exercise-picker-search')?.value||'').trim().toLocaleLowerCase('de');
+ if(!select)return;
+ select.innerHTML='<option value="">Bitte wählen …</option>'+exercises().filter(x=>!query||[x.name,x.focus,x.equipment].join(' ').toLocaleLowerCase('de').includes(query)).map(x=>`<option value="${attr(x.id)}">${esc(x.name)} · ${esc(PeakExercises.CATEGORIES[x.category])}</option>`).join('');
+}
+function filterLibrary(){
+ const q=(document.getElementById('ex-search')?.value||'').trim().toLocaleLowerCase('de');
+ const cat=document.getElementById('ex-filter')?.value||'';
+ const matches=exercises().filter(x=>(!cat||(cat==='custom'?x.origin==='custom':x.category===cat))&&(!q||[x.name,x.focus,x.description,x.equipment].join(' ').toLocaleLowerCase('de').includes(q)));
+ const target=document.getElementById('ex-results');if(target)target.innerHTML=matches.length?matches.map(exerciseCard).join(''):'<div class="empty">Keine Übung gefunden. Du kannst selbst eine hinzufügen.</div>';
+ const count=document.getElementById('ex-count');if(count)count.textContent=matches.length+' Übungen';
+}
+function createExercise(){
+ modal=`<h2>Eigene Übung anlegen</h2><p class="modal-sub">Einmal anlegen und in beliebigen Einheiten wiederverwenden. Die Übung erscheint im lokalen Backup.</p>
+ <form id="create-exercise-form" class="form-col"><div class="field"><label>Name</label><input name="name" maxlength="90" required placeholder="z. B. Einarmiger No-Hang, 20 mm" /></div>
+ <div class="field"><label>Trainingsbereich</label><select name="category">${Object.entries(PeakExercises.CATEGORIES).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+ <div class="field"><label>Trainingsziel</label><input name="focus" maxlength="70" placeholder="z. B. Maximalkraft" /></div>
+ <div class="field"><label>Gerät / Ausrüstung</label><input name="equipment" maxlength="80" /></div>
+ <div class="field"><label>Beschreibung / Protokoll</label><textarea name="description" maxlength="550" rows="3" placeholder="Wie führst du sie aus, was ist wichtig?"></textarea></div>
+ <div class="form-grid"><div class="field"><label>Messwert</label><select name="metric"><option value="kg">kg</option><option value="reps">Wiederholungen</option><option value="s">Sekunden</option><option value="attempts">Versuche</option><option value="problems">Boulder</option><option value="minutes">Minuten</option></select></div>
+ <div class="field"><label>Belastungstyp</label><select name="stress"><option value="medium">Mittel</option><option value="low">Niedrig</option><option value="high">Hoch</option></select></div></div>
+ <div class="modal-footer"><button class="button primary" type="submit">Übung speichern</button><button class="button quiet" type="button" data-action="close-modal">Abbrechen</button></div></form>`;render();
+}
+function showExercise(id){
+ const ex=PeakExercises.find(id,state.customExercises);if(!ex)return;
+ modal=`<h2>${esc(ex.name)}</h2><p class="modal-sub">${esc(PeakExercises.CATEGORIES[ex.category]||'Eigene Übung')} · ${esc(ex.focus)}</p>
+ <div class="panel"><strong>Durchführung</strong><p class="hint">${esc(ex.description)}</p><p class="hint">Ausrüstung: ${esc(ex.equipment||'individuell')} · standardmäßig erfasster Messwert: ${esc(ex.metric||'reps')} · Belastung: ${esc(ex.stress||'individuell')}</p></div>
+ <p class="hint" style="margin-top:12px">Die Übungsbeschreibung ist ein Trainingshinweis und keine individuell getestete Belastungsempfehlung. Ohne standardisiertes Protokoll keine belastbare Lastvergleichbarkeit.</p>
+ <div class="modal-footer"><button class="button primary" data-action="exercise-quicklog" data-id="${attr(ex.id)}">+ Protokollieren</button><button class="button" data-action="close-modal">Schließen</button></div>`;render();
+}
+function cleanupQuickSession(){
+ if(!pendingQuickSessionId)return;
+ for(const [day,ex] of Object.entries(state.exceptions))if(ex?.added)ex.added=ex.added.filter(x=>x.id!==pendingQuickSessionId || state.logs[day]?.[x.id]?.status==='done');
+ pendingQuickSessionId=null;
+}
+function quickLogExercise(exid){
+ const ex=PeakExercises.find(exid,state.customExercises);if(!ex)return;
+ const date=dateKey(new Date()),customId=id();
+ const catToType={finger:'kraft',pull:'kraft',core:'kraft',power:'boulder',boulder:'boulder',technique:'boulder',prehab:'prehab',run:'run',legs:'kraft',mobility:'prehab'};
+ const newSession={id:customId,title:'Freies Training · '+ex.name,type:catToType[ex.category]||'other',time:pad(new Date().getHours())+':'+pad(new Date().getMinutes()),duration:45,description:'Abweichend vom Trainingsplan selbstständig protokolliert.',steps:[[ex.name,ex.description||'Individuelle Belastung erfassen']],origin:'custom'};
+ cleanupQuickSession();
+ exception(date).added.push(newSession);pendingQuickSessionId=customId;
+ openComplete(date,customId,exid);
+}
+function exerciseRow(ex,entry={}){
+ const rowId='row-'+Math.random().toString(36).slice(2,9);
+ const number=(k,placeholder,step='1',min='0')=>`<input type="number" name="${k}" inputmode="decimal" placeholder="${placeholder}" step="${step}" min="${min}" value="${attr(entry[k]??'')}" />`;
+ return `<div class="ex-log-row" data-exercise-id="${attr(ex.id)}" data-row-id="${rowId}"><div class="between"><div><strong>${esc(ex.name)}</strong><div class="hint">${esc(PeakExercises.CATEGORIES[ex.category]||'Eigene Übung')} · ${esc(ex.metric||'reps')}</div></div><button class="button small quiet" type="button" data-action="remove-ex-row" aria-label="Übung entfernen">Entfernen</button></div>
+ <div class="ex-log-grid"><div class="field"><label>Sätze</label>${number('sets','z. B. 4')}</div><div class="field"><label>Wdh. / Satz</label>${number('reps','3')}</div><div class="field"><label>Haltedauer · s</label>${number('holdSeconds','5')}</div><div class="field"><label>Last · kg</label>${number('loadKg','kg','0.5','-200')}</div><div class="field"><label>Leiste · mm</label>${number('edgeMm','20')}</div><div class="field"><label>RPE (1–10)</label>${number('rpe','8','1','1')}</div></div>
+ <div class="field"><label>Griff / Variante / Besonderheit</label><input name="variant" maxlength="120" placeholder="Half-Crimp, Board-Winkel, Problem, …" value="${attr(entry.variant||'')}" /></div>
+ <div class="field"><label>Notiz</label><input name="notes" maxlength="300" placeholder="z. B. 2 Sätze abgebrochen" value="${attr(entry.notes||'')}" /></div></div>`;
+}
+function collectExerciseRows(form){
+ return [...form.querySelectorAll('.ex-log-row')].slice(0,80).map(row=>{
+  const id=row.dataset.exerciseId,ex=PeakExercises.find(id,state.customExercises);
+  if(!ex)return null;
+  const val=(key)=>{const input=row.querySelector(`[name="${key}"]`);if(!input||input.value.trim()==='')return null;const n=Number(input.value.replace(',','.'));return Number.isFinite(n)?n:null;};
+  const entry={exerciseId:id,name:ex.name,category:ex.category,stress:ex.stress,metric:ex.metric,sets:val('sets'),reps:val('reps'),holdSeconds:val('holdSeconds'),loadKg:val('loadKg'),edgeMm:val('edgeMm'),rpe:val('rpe'),variant:row.querySelector('[name="variant"]')?.value.trim().slice(0,120)||'',notes:row.querySelector('[name="notes"]')?.value.trim().slice(0,300)||''};
+  for(const k of ['sets','reps','holdSeconds','edgeMm'])if(entry[k]!==null&&(entry[k]<0||entry[k]>10000))throw new Error('Ungültiger Umfang bei '+ex.name);
+  if(entry.rpe!==null&&(entry.rpe<1||entry.rpe>10))throw new Error('RPE muss zwischen 1 und 10 liegen.');
+  return entry;
+ }).filter(Boolean);
+}
+function exerciseSummary(entries){
+ const records=entries.flatMap(e=>(e.log.exerciseEntries||[]).map(x=>({...x,date:e.date})));if(!records.length)return '<div class="empty">Noch keine einzelnen Übungen erfasst. In einer Einheit auf „Training abschließen“ tippen oder die Übungsbibliothek verwenden.</div>';
+ const grouped=new Map();for(const x of records){const k=x.exerciseId||x.name;const old=grouped.get(k)||{name:x.name,count:0,last:x.date,totalSets:0,unit:x.metric,latest:x};old.count++;old.totalSets+=Number(x.sets)||0;if(x.date>=old.last){old.last=x.date;old.latest=x;}grouped.set(k,old);}
+ return `<p class="hint">${records.length} Übungseinträge aus ${entries.filter(e=>e.log.exerciseEntries?.length).length} Trainings. Aufgezeichnete Sätze und Lasten bleiben im JSON-Backup enthalten.</p>${[...grouped.values()].sort((a,b)=>b.last.localeCompare(a.last)).slice(0,15).map(x=>`<div class="log-card"><div class="between"><strong>${esc(x.name)}</strong><span class="mini">${esc(x.last)}</span></div><div class="hint">${x.count}× protokolliert · ${x.totalSets} Sätze${x.latest.loadKg!==null&&x.latest.loadKg!==undefined?' · zuletzt '+esc(x.latest.loadKg)+' kg':''}${x.latest.rpe!==null&&x.latest.rpe!==undefined?' · RPE '+esc(x.latest.rpe):''}</div></div>`).join('')}`;
+}
 function renderSettings(){
   return `<div class="eyebrow">TRAININGSSTEUERUNG</div><h1 style="font-size:29px;margin:7px 0 0">Plan & Einstellungen</h1><p class="hint">Du kannst jeden Wochentag und seine Uhrzeit anpassen. Änderungen wirken auf alle Tage, die nicht individuell überschrieben wurden.</p>
-  <div class="section-head"><h2>Flexibler Coach v5</h2><button class="button small quiet" data-action="open-coach" data-date="${dateKey(new Date())}">Studien ↗</button></div>
+  <div class="section-head"><h2>Flexibler Coach v6</h2><button class="button small quiet" data-action="open-coach" data-date="${dateKey(new Date())}">Studien ↗</button></div>
   ${phaseCard(dateKey(new Date()))}
   ${coachInsight(dateKey(new Date()))}
   <div class="panel"><div class="between"><div><strong>Trainingssteuerung aktiv</strong><div class="hint">Leistungsdaten, Tagesform und Zeitbudget; der Coach darf den Plan ausdrücklich beibehalten.</div></div><input style="width:auto;min-width:21px;height:23px" type="checkbox" aria-label="Adaptive Planung aktivieren" data-setting="adaptiveEnabled" ${state.settings.adaptiveEnabled?'checked':''}/></div>
@@ -374,13 +460,14 @@ function openSession(date,sid){
   const log=getLog(date,s.id),old=log?.status==='done';
   modal=`<div class="between"><div><div class="eyebrow">${esc(niceDate(date))} · ${esc(s.time)} UHR</div><h2 style="margin:7px 0">${esc(s.title)}</h2></div>${badge(s.type)}</div><p class="modal-sub">${esc(s.duration)} Minuten · ${esc(s.description)}</p>${old?`<div class="pill lime">✓ Absolviert · RPE ${esc(log.rpe||'–')}</div>`:''}
   ${s.adaptive?`<div class="panel adaptive-explain"><div class="pills">${adaptiveTag(s)}</div><p class="hint" style="margin:10px 0 0">${esc(s.adaptive.reasons.length?s.adaptive.reasons.join(' · '):'Plan nach Blockphase, Tagescheck und dokumentierten Einheiten.')}</p>${!s.adaptive.hasCheckin?`<button class="button small" style="margin-top:10px" data-action="open-checkin" data-date="${date}">Tagesform eintragen</button>`:''}</div>`:''}<div class="subhead">DEIN KONKRETES PROGRAMM</div>${stepList(s.steps)}
+  ${log?.exerciseEntries?.length?`<div class="panel" style="margin-top:12px"><div class="subhead" style="margin-top:0">TATSÄCHLICHE ÜBUNGEN</div>${log.exerciseEntries.map(x=>`<div class="log-card"><strong>${esc(x.name||'Übung')}</strong><div class="hint">${x.sets??'–'} Sätze · ${x.reps??'–'} Wdh. · ${x.loadKg??'–'} kg · RPE ${x.rpe??'–'}</div></div>`).join('')}</div>`:''}
   ${log?.notes?`<div class="panel" style="margin-top:12px"><div class="subhead" style="margin-top:0">DEINE NOTIZEN</div><p style="margin:0;font-size:13px">${esc(log.notes)}</p></div>`:''}
   <div class="modal-footer">${s.type!=='rest'?`<button class="button primary" data-action="complete-session" data-date="${date}" data-id="${attr(s.id)}">${old?'Log bearbeiten':'✓ Training abschließen'}</button>`:''}<button class="button" data-action="edit-session" data-date="${date}" data-id="${attr(s.id)}">Bearbeiten</button></div>
   ${s.type!=='rest'?`<div class="button-group" style="margin-top:12px"><button class="button small" data-action="single-ics" data-date="${date}" data-id="${attr(s.id)}">◷ In Apple Kalender übernehmen · ${state.settings.alertMinutes} Min. vorher</button></div>`:''}
   <div class="button-group" style="margin-top:10px"><button class="button small quiet" data-action="move-session" data-date="${date}" data-id="${attr(s.id)}">↗ Verschieben</button><button class="button small quiet" data-action="skip-session" data-date="${date}" data-id="${attr(s.id)}">${log?.status==='skipped'?'Wieder aktivieren':'Ausfallen lassen'}</button><button class="button small quiet" data-action="close-modal">Schließen</button></div>`;
   render();
 }
-function openComplete(date,sid){
+function openComplete(date,sid,preselectedExerciseId=null){
   const s=getById(date,sid), log=getLog(date,sid)||{};if(!s)return;
   modal=`<h2>Training protokollieren</h2><p class="modal-sub">${esc(niceDate(date))} · ${esc(s.title)}</p><form id="complete-form" data-date="${date}" data-id="${attr(sid)}"><div class="form-grid">
   <div class="field"><label>Belastung (RPE)</label><select name="rpe">${Array.from({length:10},(_,i)=>i+1).map(n=>`<option value="${n}" ${(log.rpe||8)===n?'selected':''}>${n} / 10</option>`).join('')}</select></div>
@@ -398,7 +485,11 @@ function openComplete(date,sid){
   <p class="hint" style="margin:10px 0">Für No-Hang: gehobene Gesamtlast; für Hangboard: zusätzliches Gewicht in kg. Ohne vollständiges Fingerprotokoll erfolgt keine automatische Laststeigerung.</p>
   <div class="subhead">BOARD-TRANSFER</div><div class="form-grid"><div class="field"><label>Board</label><select name="board"><option value="">–</option>${['Moonboard','Kilterboard','Wand','Outdoor'].map(v=>`<option value="${v}" ${log.board===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Schwierigkeit / Boulder</label><input name="grade" maxlength="65" placeholder="z. B. 7C / Projektname" value="${attr(log.grade??'')}" /></div><div class="field"><label>Versuche</label><input name="attempts" type="number" min="0" max="999" value="${attr(log.attempts??'')}"/></div><div class="field"><label>Durchstieg</label><select name="send"><option value="">Nicht erfasst</option><option value="yes" ${log.send==='yes'?'selected':''}>Ja</option><option value="no" ${log.send==='no'?'selected':''}>Nein</option></select></div></div>
   <div class="field" style="margin-top:13px"><label>Was hat dich bei schwierigen Zügen am ehesten limitiert? (optional)</label><select name="limiter"><option value="">Nicht einschätzbar / nicht relevant</option>${[['finger','Kleine Griffe / Fingerkraft'],['pull','Zugkraft'],['tension','Körperspannung / Fußdruck'],['feet','Trittpräzision'],['power','Explosivität'],['coordination','Koordination'],['tactics','Beta / Pausengestaltung']].map(([k,v])=>`<option value="${k}" ${log.limiter===k?'selected':''}>${v}</option>`).join('')}</select><p class="hint">Subjektiver Hinweis, keine gesicherte Diagnose. Bei uneinheitlichen Angaben wird kein Defizit erzwungen.</p></div>
-  <div class="form-grid" style="margin-top:13px"><div class="field"><label>Ziel der Einheit erreicht?</label><select name="quality"><option value="">Bitte auswählen</option><option value="ziel" ${log.quality==='ziel'?'selected':''}>Ja · alle Hauptsätze/Intervalle</option><option value="teilweise" ${log.quality==='teilweise'?'selected':''}>Teilweise</option><option value="nicht" ${log.quality==='nicht'?'selected':''}>Nein</option></select></div><div class="field"><label>Schulter nach Training (0–10)</label><select name="shoulder"><option value="">Nicht erfasst</option>${Array.from({length:11},(_,i)=>`<option value="${i}" ${numOrNull(log.shoulder)===i?'selected':''}>${i} / 10</option>`).join('')}</select></div></div><div class="field" style="margin-top:13px"><label>Notizen, Boulderprojekte, Schmerz / Regeneration</label><textarea name="notes" placeholder="Wie lief die Einheit? Welche Boulder, welche Schwierigkeit?">${esc(log.notes||'')}</textarea></div>
+  <div class="form-grid" style="margin-top:13px"><div class="field"><label>Ziel der Einheit erreicht?</label><select name="quality"><option value="">Bitte auswählen</option><option value="ziel" ${log.quality==='ziel'?'selected':''}>Ja · alle Hauptsätze/Intervalle</option><option value="teilweise" ${log.quality==='teilweise'?'selected':''}>Teilweise</option><option value="nicht" ${log.quality==='nicht'?'selected':''}>Nein</option></select></div><div class="field"><label>Schulter nach Training (0–10)</label><select name="shoulder"><option value="">Nicht erfasst</option>${Array.from({length:11},(_,i)=>`<option value="${i}" ${numOrNull(log.shoulder)===i?'selected':''}>${i} / 10</option>`).join('')}</select></div></div>  <div class="subhead">TATSÄCHLICH AUSGEFÜHRTE ÜBUNGEN · OPTIONAL</div>
+  <p class="hint">Hier kannst du beliebige Übungen erfassen, auch wenn sie nicht auf dem ursprünglichen Plan standen. Gleichartige Sätze kannst du zusammenfassen; für abweichende Lasten füge die Übung mehrfach hinzu.</p>
+  <div id="exercise-log-rows">${[...(log.exerciseEntries||[]),...(preselectedExerciseId?[{exerciseId:preselectedExerciseId}]:[])].map(x=>{const ex=PeakExercises.find(x.exerciseId,state.customExercises);return ex?exerciseRow(ex,x):'';}).join('')}</div>
+  <div class="ex-picker"><label for="exercise-picker-search">Übung aus Bibliothek hinzufügen</label><input id="exercise-picker-search" type="search" placeholder="Suche: z. B. Klimmzug, Moonboard …" autocomplete="off" /><select id="exercise-log-select"><option value="">Bitte wählen …</option>${Object.entries(PeakExercises.CATEGORIES).map(([key,label])=>`<optgroup label="${attr(label)}">${exercises().filter(x=>x.category===key).map(x=>`<option value="${attr(x.id)}">${esc(x.name)}</option>`).join('')}</optgroup>`).join('')}</select><button type="button" class="button small primary" data-action="add-exercise-row">+ Übung hinzufügen</button></div>
+  <div class="field" style="margin-top:13px"><label>Notizen, Boulderprojekte, Schmerz / Regeneration</label><textarea name="notes" placeholder="Wie lief die Einheit? Welche Boulder, welche Schwierigkeit?">${esc(log.notes||'')}</textarea></div>
   <div class="modal-footer"><button type="submit" class="button primary">✓ Speichern</button><button type="button" class="button quiet" data-action="open-session" data-date="${date}" data-id="${attr(sid)}">Zurück</button></div></form>`;
   render();
 }
@@ -485,7 +576,16 @@ function registerActions(){
     if(action==='close-modal'&&e.target.closest('.modal')&&e.target!==el)return;
     const d=el.dataset.date,sid=el.dataset.id;
     switch(action){
-      case 'nav':view=el.dataset.view;modal='';render();break;
+      case 'nav':cleanupQuickSession();view=el.dataset.view;modal='';render();break;
+      case 'create-exercise':createExercise();break;
+      case 'exercise-info':showExercise(sid);break;
+      case 'exercise-quicklog':quickLogExercise(sid);break;
+      case 'add-exercise-row':{
+        const sel=document.getElementById('exercise-log-select');const ex=PeakExercises.find(sel?.value,state.customExercises);
+        if(!ex){toast('Bitte zuerst eine Übung auswählen.');break;}
+        const area=document.getElementById('exercise-log-rows');if(area){area.insertAdjacentHTML('beforeend',exerciseRow(ex));sel.value='';area.lastElementChild?.scrollIntoView({behavior:'smooth',block:'nearest'});}break;
+      }
+      case 'remove-ex-row':el.closest('.ex-log-row')?.remove();break;
       case 'jump-today':selectedDate=dateKey(new Date());calendarAnchor=selectedDate;render();break;
       case 'calendar-mode':calendarMode=el.dataset.mode;calendarAnchor=selectedDate;render();break;
       case 'calendar-shift':{
@@ -503,7 +603,7 @@ function registerActions(){
       case 'add-session':openEdit(d,null);break;
       case 'move-session':openMove(d,sid);break;
       case 'skip-session':setSkip(d,sid);break;
-      case 'close-modal':modal='';render();break;
+      case 'close-modal':cleanupQuickSession();modal='';render();break;
       case 'export-json':download(`PeakPlan-Backup-${dateKey(new Date())}.json`,JSON.stringify(state,null,2),'application/json');toast('Backup erstellt. Bitte sicher in Dateien/iCloud ablegen.');break;
       case 'import-json':document.getElementById('import-file')?.click();break;
       case 'export-ics':{
@@ -527,7 +627,9 @@ function registerActions(){
       }
     }
   });
+  document.addEventListener('input',e=>{if(e.target.id==='ex-search')filterLibrary();if(e.target.id==='exercise-picker-search')filterExercisePicker();});
   document.addEventListener('change',async e=>{
+    if(e.target.id==='ex-filter'){filterLibrary();return;}
     const el=e.target;
     if(el.id==='import-file'&&el.files?.[0]){
       try{const file=el.files[0];if(file.size>5_000_000)throw new Error('Backup-Datei zu groß.');const data=JSON.parse(await file.text());const parsed=safeState(data);if(!confirm('Bestehende PeakPlan-Daten vollständig durch dieses Backup ersetzen?'))return;state=parsed;selectedDate=dateKey(new Date());calendarAnchor=selectedDate;view='today';updateState();toast('Backup eingelesen.');}
@@ -544,8 +646,15 @@ function registerActions(){
     }
   });
   document.addEventListener('submit',e=>{
-    if(!['edit-form','complete-form','move-form','checkin-form'].includes(e.target.id))return;
+    if(!['edit-form','complete-form','move-form','checkin-form','create-exercise-form'].includes(e.target.id))return;
     e.preventDefault();const form=e.target,fd=new FormData(form),date=form.dataset.date,sid=form.dataset.id;
+    if(form.id==='create-exercise-form'){
+      const name=String(fd.get('name')||'').trim().slice(0,90),category=String(fd.get('category')||'');
+      if(!name||!PeakExercises.CATEGORIES[category]){toast('Name oder Bereich ungültig.');return;}
+      if(state.customExercises.length>=250){toast('Maximal 250 eigene Übungen.');return;}
+      state.customExercises.push({id:'own-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7),name,category,focus:String(fd.get('focus')||'').trim().slice(0,70),equipment:String(fd.get('equipment')||'').trim().slice(0,80),description:String(fd.get('description')||'').trim().slice(0,550),metric:String(fd.get('metric')||'reps'),stress:String(fd.get('stress')||'medium'),origin:'custom'});
+      view='library';modal='';updateState();toast('Eigene Übung gespeichert.');return;
+    }
     if(form.id==='checkin-form'){const c={};for(const key of ['sleep','energy','soreness','shoulder','fingerPain']){const n=numOrNull(fd.get(key));if(n!==null&&n>=0&&n<=10)c[key]=n;}if(!state.checkins)state.checkins={};const minutes=numOrNull(fd.get('minutesAvailable'));if([30,45,60,90,120,150].includes(minutes))c.minutesAvailable=minutes;const wish=String(fd.get('sessionWish')||'normal');if(['off','light','return'].includes(wish))c.sessionWish=wish;if(Object.keys(c).length)state.checkins[date]=c;else delete state.checkins[date];modal='';updateState();toast('Tagesform gespeichert · Trainingsplan neu berechnet.');return;}
     if(form.id==='edit-form'){
       const target=String(fd.get('date'));
@@ -558,10 +667,11 @@ function registerActions(){
       const s=getById(date,sid);if(!s)return;
       const log={status:'done',title:s.title,snapshot:clone(s),completedAt:new Date().toISOString(),rpe:Number(fd.get('rpe')),notes:String(fd.get('notes')||'').slice(0,2000),quality:['ziel','teilweise','nicht'].includes(String(fd.get('quality')))?String(fd.get('quality')):'',shoulder:numOrNull(fd.get('shoulder')),fingerPain:numOrNull(fd.get('fingerPain')),fingerMode:String(fd.get('fingerMode')||''),fingerGrip:String(fd.get('fingerGrip')||''),fingerEdge:numOrNull(fd.get('fingerEdge')),fingerHold:numOrNull(fd.get('fingerHold')),pullupReps:numOrNull(fd.get('pullupReps')),board:String(fd.get('board')||''),grade:String(fd.get('grade')||'').slice(0,65),attempts:numOrNull(fd.get('attempts')),send:String(fd.get('send')||''),limiter:['finger','pull','tension','feet','power','coordination','tactics'].includes(String(fd.get('limiter')))?String(fd.get('limiter')):''};
       for(const key of ['finger','pullup','distance','minutes']){const raw=String(fd.get(key)||'').trim().replace(',','.');if(raw!==''){const value=Number(raw);if(Number.isFinite(value)&&value>=0)log[key]=value;}}
-      (state.logs[date]||(state.logs[date]={}))[sid]=log;modal='';updateState();toast('Training dokumentiert. Stark!');
+      try{log.exerciseEntries=collectExerciseRows(form);}catch(err){toast(err.message);return;}
+      (state.logs[date]||(state.logs[date]={}))[sid]=log;pendingQuickSessionId=null;modal='';updateState();toast('Training und Übungen dokumentiert.');
     }
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&modal){modal='';render();}});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&modal){cleanupQuickSession();modal='';render();}});
 }
 async function init(){
   const saved=await readState();if(saved){try{state=safeState(saved);}catch{state=initialState();}}
